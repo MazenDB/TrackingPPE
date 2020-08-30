@@ -52,6 +52,10 @@ contract Registration{
         retailers[r]=true;
     }
     
+    function isOwner(address o) public view returns(bool){
+        return (owner==o);
+    }
+    
     function manufacturerExist(address m) public view returns(bool){
         return manufacturers[m];
     }
@@ -73,20 +77,19 @@ contract Registration{
 
 contract Lot{
     
-    //address productID;
+    address productID;
     string productName;
     string materialHash;
     string batchNumber;
-    uint timestamp;
     string CECertificateHash;
-    uint totalQuantity;
-    uint remainingQuantity;
+    uint public totalQuantity;
+    uint public remainingQuantity;
     
     string ownerType;
     address owner;
     Registration RegistrationContract;
     
-    event LotDispatched (address productID, string productName, string materialHash, string batchNumber, uint timestamp, string CECertificateHash);
+    event LotDispatched (address productID, string productName, string materialHash, string batchNumber, string CECertificateHash);
     event OwnershipTransferred (address NewOwner, string ownerType);
     event SaletToRetailer (address productID, address retailerAddress, uint quantitySold);
     
@@ -97,13 +100,7 @@ contract Lot{
       _;
     }   
     
-    modifier onlyManufacturer{
-      require(RegistrationContract.manufacturerExist(msg.sender),
-      "Sender not authorized."
-      );
-      _;
-    }   
-    
+
     modifier onlyWholeSaler{
       require(RegistrationContract.wholesalerExist(msg.sender),
       "Sender not authorized."
@@ -111,22 +108,22 @@ contract Lot{
       _;
     }   
     
-    constructor(address reigstration,string memory product, string memory material, string memory batch, string memory CE, uint quantity) public{
+    constructor(address reigstration, address ID, string memory name, string memory material, string memory batch, string memory CE, uint quantity) public{
         RegistrationContract = Registration(reigstration);
         
         if(!RegistrationContract.manufacturerExist(msg.sender))
             revert("Sender not authorized.");
         
         owner=msg.sender;
-        productName=product;
+        productID=ID;
+        productName=name;
         materialHash=material;
         batchNumber=batch;
-        timestamp=now;
         CECertificateHash=CE;
         totalQuantity=quantity;
         remainingQuantity=totalQuantity;
         
-        emit LotDispatched(address(this), productName, materialHash, batchNumber, timestamp, CECertificateHash);
+        emit LotDispatched(address(this), productName, materialHash, batchNumber, CECertificateHash);
     }
     
     function transferOwnership (address newOwner) public onlyOwner{
@@ -157,5 +154,84 @@ contract Lot{
         emit SaletToRetailer(address(this),retailer,quantityToSell);
         
     } 
+
+}
+
+
+contract OrderManager{
+    
+    Registration RegistrationContract;
+    
+    struct order{
+        address manufacturer;
+        address wholesaler;
+        address productID;
+        uint quantity;
+        bool orderConfirmed;
+        bool orderReceived;
+    }
+    
+    mapping(bytes32=>order) orders;
+    modifier onlyOwner{
+      require(RegistrationContract.isOwner(msg.sender),
+      "Sender not authorized."
+      );
+      _;
+    }   
+    
+    modifier onlyWholeSaler{
+      require(RegistrationContract.wholesalerExist(msg.sender),
+      "Sender not authorized."
+      );
+      _;
+    }   
+    
+    modifier onlyManufacturer{
+      require(RegistrationContract.manufacturerExist(msg.sender),
+      "Sender not authorized."
+      );
+      _;
+    }   
+    
+    event OrderPlaced (address manufacturer, address wholesaler, address productID, uint quantity);
+
+    event OrderConfirmed (bytes32 orderID);
+
+    event OrderReceived (bytes32 orderID);
+
+
+    constructor(address reigstration) public{
+        RegistrationContract = Registration(reigstration);
+        
+        if(!RegistrationContract.isOwner(msg.sender))
+            revert("Sender not authorized");
+        
+    }
+    
+    function placeOrder(address productID, uint quantity, address manufacturer) public onlyWholeSaler{
+        bytes32 temp=keccak256(abi.encodePacked(msg.sender,now,address(this),productID));
+        orders[temp]=order(manufacturer,msg.sender,productID,quantity,false,false);
+        
+        emit OrderPlaced(manufacturer,msg.sender,productID,quantity);
+    }
+    
+    function confirmOrder(bytes32 orderID) public onlyManufacturer{
+        require(orders[orderID].manufacturer==msg.sender,
+        "Sender not authorized."
+        );
+        
+        orders[orderID].orderConfirmed=true;
+        
+        emit OrderConfirmed(orderID);
+    }
+    
+    function confirmReceiving(bytes32 orderID) public onlyWholeSaler{
+        require(orders[orderID].wholesaler==msg.sender,
+        "Sender not authorized."
+        );
+        orders[orderID].orderReceived=true;
+        
+        emit OrderReceived(orderID);
+    }
 
 }
