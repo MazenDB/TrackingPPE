@@ -77,16 +77,16 @@ contract Registration{
 
 contract Lot{
     
-    address productID;
-    string productName;
-    string materialHash;
-    string batchNumber;
-    string CECertificateHash;
+    address public productID;
+    string public productName;
+    string public materialHash;
+    string public batchNumber;
+    string public CECertificateHash;
     uint public totalQuantity;
     uint public remainingQuantity;
-    
+    address registrationContract;
     string ownerType;
-    address owner;
+    address payable owner;
     Registration RegistrationContract;
     
     event LotDispatched (address productID, string productName, string materialHash, string batchNumber, string CECertificateHash);
@@ -113,7 +113,7 @@ contract Lot{
         
         if(!RegistrationContract.manufacturerExists(msg.sender))
             revert("Sender not authorized.");
-        
+        registrationContract=registration;
         owner=msg.sender;
         productID=ID;
         productName=name;
@@ -126,7 +126,7 @@ contract Lot{
         emit LotDispatched(address(this), productName, materialHash, batchNumber, CECertificateHash);
     }
     
-    function transferOwnership (address newOwner) public onlyOwner{
+    function transferOwnership (address payable newOwner) public onlyOwner{
         if(RegistrationContract.manufacturerExists(newOwner))
         ownerType="Manufacturer";
         else if(RegistrationContract.distributorExists(newOwner))
@@ -153,6 +153,10 @@ contract Lot{
         
         emit SaletToProvider(address(this),provider,quantityToSell);
         
+        if(remainingQuantity==0)
+        {
+            selfdestruct(owner);
+        }
     } 
 
 }
@@ -166,7 +170,8 @@ contract OrderManager{
         Pending,
         Accepted,
         Rejected,
-        Received
+        Received,
+        DistributorApproved
     }
     
     struct order{
@@ -174,10 +179,11 @@ contract OrderManager{
         address wholesaler;
         address productID;
         uint quantity;
+        
         status orderStatus;
     }
     
-    mapping(bytes32=>order) orders;
+    mapping(bytes32=>order) public orders;
     modifier onlyOwner{
       require(RegistrationContract.isOwner(msg.sender),
       "Sender not authorized."
@@ -199,7 +205,16 @@ contract OrderManager{
       _;
     }   
     
-    event OrderPlaced (address manufacturer, address wholesaler, address productID, uint quantity);
+    modifier onlyDistributor{
+      require(RegistrationContract.distributorExists(msg.sender),
+      "Sender not authorized."
+      );
+      _;
+    }   
+    
+    event OrderPlaced (bytes32 orderID, address manufacturer, address wholesaler, address productID, uint quantity);
+
+    event OrderRequested (bytes32 orderID, address manufacturer, address wholesaler, address productID, uint quantity);
 
     event StatusUpdated (bytes32 orderID, status newStatus);
 
@@ -214,19 +229,30 @@ contract OrderManager{
         
     }
     
-    function placeOrder(address productID, uint quantity, address manufacturer) public onlyWholeSaler{
+    function requestOrderWholeSaler(address productID, uint quantity, address manufacturer) public onlyWholeSaler{
         require(RegistrationContract.manufacturerExists(manufacturer),
         "Manufacturer address is not valid");
         bytes32 temp=keccak256(abi.encodePacked(msg.sender,now,address(this),productID));
         orders[temp]=order(manufacturer,msg.sender,productID,quantity,status.Pending);
         
-        emit OrderPlaced(manufacturer,msg.sender,productID,quantity);
+        emit OrderRequested(temp, manufacturer,msg.sender,productID,quantity);
+    }
+    
+    function placeOrderDistributor(bytes32 orderID) public onlyDistributor{
+        require(orders[orderID].orderStatus==status.Pending);
+        orders[orderID].orderStatus=status.DistributorApproved;
+
+        emit OrderPlaced(orderID, orders[orderID].manufacturer,orders[orderID].wholesaler,orders[orderID].productID,orders[orderID].quantity);
+
     }
     
     function confirmOrder(bytes32 orderID, bool accepted) public onlyManufacturer{
         require(orders[orderID].manufacturer==msg.sender,
         "Sender not authorized."
         );
+        
+        require(orders[orderID].orderStatus==status.DistributorApproved);
+
         if(accepted){
             orders[orderID].orderStatus=status.Accepted;
         }
@@ -241,6 +267,8 @@ contract OrderManager{
         require(orders[orderID].wholesaler==msg.sender,
         "Sender not authorized."
         );
+        require(orders[orderID].orderStatus==status.Accepted);
+
         orders[orderID].orderStatus=status.Received;
         
         emit OrderReceived(orderID);
