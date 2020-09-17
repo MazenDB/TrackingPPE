@@ -170,13 +170,12 @@ contract OrderManager{
         Pending,
         Accepted,
         Rejected,
-        Received,
-        DistributorApproved
+        Received
     }
     
     struct order{
-        address manufacturer;
-        address wholesaler;
+        address receiver;
+        address orderer;
         address productID;
         uint quantity;
         
@@ -198,23 +197,22 @@ contract OrderManager{
       _;
     }   
     
-    modifier onlyManufacturer{
-      require(RegistrationContract.manufacturerExists(msg.sender),
+    modifier onlyOrderer{
+      require(RegistrationContract.wholesalerExists(msg.sender) || RegistrationContract.distributorExists(msg.sender),
+      "Sender not authorized."
+      );
+      _;
+    } 
+    
+    modifier onlyReceiver{
+      require(RegistrationContract.manufacturerExists(msg.sender) || RegistrationContract.distributorExists(msg.sender),
       "Sender not authorized."
       );
       _;
     }   
     
-    modifier onlyDistributor{
-      require(RegistrationContract.distributorExists(msg.sender),
-      "Sender not authorized."
-      );
-      _;
-    }   
     
-    event OrderPlaced (bytes32 orderID, address manufacturer, address wholesaler, address productID, uint quantity);
-
-    event OrderRequested (bytes32 orderID, address manufacturer, address wholesaler, address productID, uint quantity);
+    event OrderPlaced (bytes32 orderID, address receiver, address orderer, address productID, uint quantity);
 
     event StatusUpdated (bytes32 orderID, status newStatus);
 
@@ -229,29 +227,22 @@ contract OrderManager{
         
     }
     
-    function requestOrderWholeSaler(address productID, uint quantity, address manufacturer) public onlyWholeSaler{
-        require(RegistrationContract.manufacturerExists(manufacturer),
+    function placeOrder(address productID, uint quantity, address receiver) public onlyOrderer{
+        require(RegistrationContract.distributorExists(receiver) || RegistrationContract.manufacturerExists(receiver) ,
         "Manufacturer address is not valid");
         bytes32 temp=keccak256(abi.encodePacked(msg.sender,now,address(this),productID));
-        orders[temp]=order(manufacturer,msg.sender,productID,quantity,status.Pending);
+        orders[temp]=order(receiver,msg.sender,productID,quantity,status.Pending);
         
-        emit OrderRequested(temp, manufacturer,msg.sender,productID,quantity);
+        emit OrderPlaced(temp, receiver,msg.sender,productID,quantity);
     }
     
-    function placeOrderDistributor(bytes32 orderID) public onlyDistributor{
-        require(orders[orderID].orderStatus==status.Pending);
-        orders[orderID].orderStatus=status.DistributorApproved;
 
-        emit OrderPlaced(orderID, orders[orderID].manufacturer,orders[orderID].wholesaler,orders[orderID].productID,orders[orderID].quantity);
-
-    }
-    
-    function confirmOrder(bytes32 orderID, bool accepted) public onlyManufacturer{
-        require(orders[orderID].manufacturer==msg.sender,
+    function confirmOrder(bytes32 orderID, bool accepted) public onlyReceiver{
+        require(orders[orderID].receiver==msg.sender,
         "Sender not authorized."
         );
         
-        require(orders[orderID].orderStatus==status.DistributorApproved);
+        require(orders[orderID].orderStatus==status.Pending);
 
         if(accepted){
             orders[orderID].orderStatus=status.Accepted;
@@ -263,8 +254,8 @@ contract OrderManager{
 
     }
     
-    function confirmReceived(bytes32 orderID) public onlyWholeSaler{
-        require(orders[orderID].wholesaler==msg.sender,
+    function confirmReceived(bytes32 orderID) public onlyOrderer{
+        require(orders[orderID].orderer==msg.sender,
         "Sender not authorized."
         );
         require(orders[orderID].orderStatus==status.Accepted);
